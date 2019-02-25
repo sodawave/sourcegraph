@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sourcegraph/sourcegraph/pkg/httputil"
 	log15 "gopkg.in/inconshreveable/log15.v2"
 )
 
@@ -29,25 +30,25 @@ func NewRequestCounter(subsystem, help string) *RequestCounter {
 	return &RequestCounter{counter: requestCounter, subsystem: subsystem}
 }
 
-// Transport returns an http.RoundTripper that increments c for each request. The categoryFunc is called to
+// Doer wraps cli with request counting that increments c for each request. The categoryFunc is called to
 // determine the category label for each request.
-func (c *RequestCounter) Transport(transport http.RoundTripper, categoryFunc func(*url.URL) string) http.RoundTripper {
-	return &requestCounterTransport{
+func (c *RequestCounter) Doer(cli httputil.Doer, categoryFunc func(*url.URL) string) httputil.Doer {
+	return &requestCounterDoer{
 		counter:      c,
-		transport:    transport,
+		cli:          cli,
 		categoryFunc: categoryFunc,
 	}
 }
 
-type requestCounterTransport struct {
+type requestCounterDoer struct {
 	counter      *RequestCounter
-	transport    http.RoundTripper
+	cli          httputil.Doer
 	categoryFunc func(*url.URL) string
 }
 
-func (t *requestCounterTransport) RoundTrip(r *http.Request) (resp *http.Response, err error) {
+func (t *requestCounterDoer) Do(r *http.Request) (resp *http.Response, err error) {
 	start := time.Now()
-	resp, err = t.transport.RoundTrip(r)
+	resp, err = t.cli.Do(r)
 
 	category := t.categoryFunc(r.URL)
 
