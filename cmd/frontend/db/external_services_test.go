@@ -7,6 +7,7 @@ import (
 
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/kylelemons/godebug/pretty"
+	"github.com/sourcegraph/sourcegraph/schema"
 )
 
 func TestExternalServices_ValidateConfig(t *testing.T) {
@@ -56,11 +57,12 @@ func TestExternalServices_ValidateConfig(t *testing.T) {
 
 	// Test table
 	for _, tc := range []struct {
-		kind   string
-		desc   string
-		ext    externalServices
-		config string
-		assert func(testing.TB, []string)
+		kind      string
+		desc      string
+		ext       externalServices
+		config    string
+		providers []schema.AuthProviders
+		assert    func(testing.TB, []string)
 	}{
 		{
 			kind:   "AWSCODECOMMIT",
@@ -303,6 +305,51 @@ func TestExternalServices_ValidateConfig(t *testing.T) {
 			assert: excludes(`authorization.ttl: time: invalid duration 0`),
 		},
 		{
+			kind: "GITLAB",
+			desc: "missing oauth provider",
+			config: `
+			{
+				"url": "https://gitlab.foo.bar",
+				"authorization": { "identityProvider": { "type": "oauth" } }
+			}
+			`,
+			assert: includes(`authorization.identityProvider: no auth provider in critical config with url="https://gitlab.foo.bar"`),
+		},
+		{
+			kind: "GITLAB",
+			desc: "missing external provider",
+			config: `
+			{
+				"url": "https://gitlab.foo.bar",
+				"authorization": {
+					"identityProvider": {
+						"type": "external",
+						"authProviderID": "foo",
+						"authProviderType": "bar",
+						"gitlabProvider": "baz"
+					}
+				}
+			}
+			`,
+			assert: includes(`did not find authentication provider matching type bar and configID foo`),
+		},
+		{
+			kind: "GITLAB",
+			desc: "username identity provider",
+			config: `
+			{
+				"url": "https://gitlab.foo.bar",
+				"token": "super-secret-token",
+				"authorization": {
+					"identityProvider": {
+						"type": "username",
+					}
+				}
+			}
+			`,
+			assert: equals("<nil>"),
+		},
+		{
 			kind:   "PHABRICATOR",
 			desc:   "without repos nor token",
 			config: `{}`,
@@ -417,13 +464,16 @@ func TestExternalServices_ValidateConfig(t *testing.T) {
 		tc := tc
 		t.Run(tc.kind+"/"+tc.desc, func(t *testing.T) {
 			var have []string
-			switch e := tc.ext.validateConfig(tc.kind, tc.config).(type) {
+			err := tc.ext.validateConfig(tc.kind, tc.config, tc.providers)
+			switch e := err.(type) {
 			case nil:
 				have = append(have, "<nil>")
 			case *multierror.Error:
 				for _, err := range e.Errors {
 					have = append(have, err.Error())
 				}
+			default:
+				have = append(have, err.Error())
 			}
 
 			tc.assert(t, have)

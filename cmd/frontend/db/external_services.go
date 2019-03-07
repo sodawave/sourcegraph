@@ -16,6 +16,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/pkg/errors"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/types"
+	"github.com/sourcegraph/sourcegraph/pkg/conf"
 	"github.com/sourcegraph/sourcegraph/pkg/db/dbconn"
 	"github.com/sourcegraph/sourcegraph/pkg/db/dbutil"
 	"github.com/sourcegraph/sourcegraph/pkg/jsonc"
@@ -65,7 +66,7 @@ func (o ExternalServicesListOptions) sqlConditions() []*sqlf.Query {
 	return conds
 }
 
-func (e *externalServices) validateConfig(kind, config string) error {
+func (e *externalServices) validateConfig(kind, config string, ps []schema.AuthProviders) error {
 	ext, ok := ExternalServiceKinds[kind]
 	if !ok {
 		return fmt.Errorf("invalid external service kind: %s", kind)
@@ -110,7 +111,7 @@ func (e *externalServices) validateConfig(kind, config string) error {
 		if err = json.Unmarshal(normalized, &c); err != nil {
 			return err
 		}
-		err = validateGitlabConnection(&c)
+		err = validateGitlabConnection(&c, conf.Get().Critical.AuthProviders)
 
 	case "OTHER":
 		var c schema.OtherExternalServiceConnection
@@ -159,11 +160,69 @@ func validateGithubConnection(c *schema.GitHubConnection) (err error) {
 	return err
 }
 
-func validateGitlabConnection(c *schema.GitLabConnection) (err error) {
-	if c.Authorization != nil {
-		err = validateTTL("authorization.ttl", c.Authorization.Ttl, "3h")
+func validateGitlabConnection(c *schema.GitLabConnection, ps []schema.AuthProviders) (err error) {
+	if c.Authorization == nil {
+		return nil
 	}
-	return err
+
+	uri, err := url.Parse(c.Url)
+	if err != nil {
+		return fmt.Errorf("could not parse URL for GitLab instance %q: %s", c.Url, err)
+	}
+
+	if err = validateTTL("authorization.ttl", c.Authorization.Ttl, "3h"); err != nil {
+		return err
+	}
+
+	switch idp := c.Authorization.IdentityProvider; {
+	case idp.Oauth != nil:
+		// Check that there is a GitLab authn provider corresponding to this GitLab instance
+		foundAuthProvider := false
+		for _, authnProvider := range ps {
+			if authnProvider.Gitlab == nil {
+				continue
+			}
+			authnURL := authnProvider.Gitlab.Url
+			if authnURL == "" {
+				authnURL = "https://gitlab.com"
+			}
+			authProviderURL, err := url.Parse(authnURL)
+			if err != nil {
+				// Ignore the error here, because the authn provider is responsible for its own validation
+				continue
+			}
+			if authProviderURL.Hostname() == uri.Hostname() {
+				foundAuthProvider = true
+				break
+			}
+		}
+
+		if !foundAuthProvider {
+			return fmt.Errorf("authorization.identityProvider: no auth provider in critical config with url=%q", c.Url)
+		}
+
+	case idp.Username != nil:
+
+	case idp.External != nil:
+		ext := idp.External
+		foundAuthProvider := false
+		for _, authProvider := range ps {
+			saml := authProvider.Saml
+			foundMatchingSAML := (saml != nil && saml.ConfigID == ext.AuthProviderID && ext.AuthProviderType == saml.Type)
+			oidc := authProvider.Openidconnect
+			foundMatchingOIDC := (oidc != nil && oidc.ConfigID == ext.AuthProviderID && ext.AuthProviderType == oidc.Type)
+			if foundMatchingSAML || foundMatchingOIDC {
+				foundAuthProvider = true
+				break
+			}
+		}
+
+		if !foundAuthProvider {
+			return fmt.Errorf("did not find authentication provider matching type %s and configID %s", ext.AuthProviderType, ext.AuthProviderID)
+		}
+	}
+
+	return nil
 }
 
 func validateTTL(field, ttl, def string) error {
@@ -180,7 +239,8 @@ func validateTTL(field, ttl, def string) error {
 //
 // 🚨 SECURITY: The caller must ensure that the actor is a site admin.
 func (c *externalServices) Create(ctx context.Context, externalService *types.ExternalService) error {
-	if err := c.validateConfig(externalService.Kind, externalService.Config); err != nil {
+	ps := conf.Get().Critical.AuthProviders
+	if err := c.validateConfig(externalService.Kind, externalService.Config, ps); err != nil {
 		return err
 	}
 
@@ -211,7 +271,8 @@ func (c *externalServices) Update(ctx context.Context, id int64, update *Externa
 			return err
 		}
 
-		if err := c.validateConfig(externalService.Kind, *update.Config); err != nil {
+		ps := conf.Get().Critical.AuthProviders
+		if err := c.validateConfig(externalService.Kind, *update.Config, ps); err != nil {
 			return err
 		}
 	}
