@@ -255,6 +255,55 @@ func TestExternalServices_ValidateConfig(t *testing.T) {
 			assert: excludes(`authorization.ttl: time: invalid duration 0`),
 		},
 		{
+			kind:   "GITHUB",
+			desc:   "invalid empty blacklist",
+			config: `{"blacklist": []}`,
+			assert: includes(`blacklist: Array must have at least 1 items`),
+		},
+		{
+			kind:   "GITHUB",
+			desc:   "invalid empty blacklist item",
+			config: `{"blacklist": [{}]}`,
+			assert: includes(`blacklist.0: Must validate at least one schema (anyOf)`),
+		},
+		{
+			kind:   "GITHUB",
+			desc:   "invalid blacklist item",
+			config: `{"blacklist": [{"foo": "bar"}]}`,
+			assert: includes(`blacklist.0: Must validate at least one schema (anyOf)`),
+		},
+		{
+			kind:   "GITHUB",
+			desc:   "invalid blacklist item name",
+			config: `{"blacklist": [{"name": "bar"}]}`,
+			assert: includes(`blacklist.0.name: Does not match pattern '^[\w-]+/[\w.-]+$'`),
+		},
+		{
+			kind:   "GITHUB",
+			desc:   "invalid empty blacklist item id",
+			config: `{"blacklist": [{"id": ""}]}`,
+			assert: includes(`blacklist.0.id: String length must be greater than or equal to 1`),
+		},
+		{
+			kind:   "GITHUB",
+			desc:   "invalid additional blacklist item properties",
+			config: `{"blacklist": [{"id": "foo", "bar": "baz"}]}`,
+			assert: includes(`bar: Additional property bar is not allowed`),
+		},
+		{
+			kind: "GITHUB",
+			desc: "both name and id can be specified in blacklist",
+			config: `
+			{
+				"url": "https://github.corp.com",
+				"token": "very-secret-token",
+				"blacklist": [
+					{"name": "foo/bar", "id": "AAAAA="}
+				]
+			}`,
+			assert: equals(`<nil>`),
+		},
+		{
 			kind:   "GITLAB",
 			desc:   "without url nor token",
 			config: `{}`,
