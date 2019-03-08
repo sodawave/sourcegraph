@@ -92,6 +92,10 @@ type BitbucketServerConnection struct {
 	Url                         string `json:"url"`
 	Username                    string `json:"username,omitempty"`
 }
+type Blacklist struct {
+	Id   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
 
 // BuiltinAuthProvider description: Configures the builtin username-password authentication provider.
 type BuiltinAuthProvider struct {
@@ -167,6 +171,7 @@ type GitHubAuthorization struct {
 // GitHubConnection description: Configuration for a connection to GitHub or GitHub Enterprise.
 type GitHubConnection struct {
 	Authorization               *GitHubAuthorization `json:"authorization,omitempty"`
+	Blacklist                   []*Blacklist         `json:"blacklist,omitempty"`
 	Certificate                 string               `json:"certificate,omitempty"`
 	GitURLType                  string               `json:"gitURLType,omitempty"`
 	InitialRepositoryEnablement bool                 `json:"initialRepositoryEnablement,omitempty"`
